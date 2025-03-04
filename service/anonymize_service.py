@@ -203,7 +203,7 @@ class AnonymizationService:
             # Upload to MinIO
             try:
                 minio_service = MinioService()
-                upload_location = os.environ.get('MINIO_UPLOAD_LOCATION', 'anonymized-pdfs')
+                upload_location = os.environ.get('MINIO_UPLOAD_BUCKET', 'anonymized-pdfs')
                 object_name = f"{process_id}/result.pdf"
                 
                 # Make sure the bucket exists
@@ -241,6 +241,14 @@ class AnonymizationService:
         Returns:
             Dictionary with image output
         """
+
+        if result_deliver == "url":
+            minio_service = MinioService()
+            upload_location = os.environ.get('MINIO_UPLOAD_BUCKET', 'anonymized-pdfs')
+
+            # Make sure the bucket exists
+            minio_service.create_bucket_if_not_exists(upload_location)
+
         images = []
         for page_num in range(len(doc)):
             page = doc[page_num]
@@ -256,12 +264,7 @@ class AnonymizationService:
             else:  # url
                 # Upload to MinIO
                 try:
-                    minio_service = MinioService()
-                    upload_location = os.environ.get('MINIO_UPLOAD_LOCATION', 'anonymized-pdfs')
                     object_name = f"{process_id}/result_page_{page_num}.png"
-                    
-                    # Make sure the bucket exists
-                    minio_service.create_bucket_if_not_exists(upload_location)
                     
                     # Upload the file
                     with open(img_path, "rb") as f:
@@ -314,7 +317,7 @@ class AnonymizationService:
             # Upload to MinIO
             try:
                 minio_service = MinioService()
-                upload_location = os.environ.get('MINIO_UPLOAD_LOCATION', 'anonymized-pdfs')
+                upload_location = os.environ.get('MINIO_UPLOAD_BUCKET', 'anonymized-pdfs')
                 object_name = f"{process_id}/result.md"
                 
                 # Make sure the bucket exists
