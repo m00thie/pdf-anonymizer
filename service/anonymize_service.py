@@ -4,7 +4,9 @@ import requests
 import os
 import tempfile
 import re
+import uuid
 from typing import List, Dict, Any, Optional, Union, Tuple, BinaryIO
+from service.minio_service import MinioService
 
 class AnonymizationService:
     """Service for anonymizing sensitive content in PDF files"""
@@ -15,7 +17,8 @@ class AnonymizationService:
         pdf_content: Optional[str] = None,
         pdf_file: Optional[str] = None,
         output_format: List[str] = ["pdf"],
-        result_deliver: str = "response"
+        result_deliver: str = "response",
+        process_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Anonymize sensitive content in a PDF file
@@ -34,6 +37,10 @@ class AnonymizationService:
         temp_file = None
         
         try:
+            # Generate process_id if not provided
+            if not process_id:
+                process_id = str(uuid.uuid4())
+                
             # Load the PDF document
             doc, temp_file = AnonymizationService._load_pdf_document(pdf_content, pdf_file)
             if isinstance(doc, dict) and "error" in doc:
@@ -46,13 +53,13 @@ class AnonymizationService:
             result = {}
             
             if "pdf" in output_format:
-                result.update(AnonymizationService._generate_pdf_output(doc, result_deliver))
+                result.update(AnonymizationService._generate_pdf_output(doc, result_deliver, process_id))
             
             if "img" in output_format:
-                result.update(AnonymizationService._generate_image_output(doc, result_deliver))
+                result.update(AnonymizationService._generate_image_output(doc, result_deliver, process_id))
             
             if "md" in output_format:
-                result.update(AnonymizationService._generate_markdown_output(doc, sensitive_content, result_deliver))
+                result.update(AnonymizationService._generate_markdown_output(doc, sensitive_content, result_deliver, process_id))
             
             return result
             
@@ -98,18 +105,44 @@ class AnonymizationService:
     
     @staticmethod
     def _load_from_url(pdf_file: str) -> Tuple[Any, str]:
-        """Load PDF from URL"""
+        """Load PDF from URL or MinIO"""
         try:
-            response = requests.get(pdf_file)
-            if response.status_code == 200:
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-                temp_file.write(response.content)
-                temp_file.close()
-                
-                doc = fitz.open(temp_file.name)
-                return doc, temp_file.name
+            # Check if this is a MinIO URL (internal URL)
+            if not pdf_file.startswith(('http://', 'https://')):
+                # This is a MinIO object path
+                try:
+                    # Format should be bucket_name/object_name
+                    parts = pdf_file.split('/', 1)
+                    if len(parts) != 2:
+                        return {"error": f"Invalid MinIO object path: {pdf_file}"}, None
+                    
+                    bucket_name, object_name = parts
+                    
+                    # Get the object from MinIO
+                    minio_service = MinioService()
+                    response = minio_service.get_object(bucket_name, object_name)
+                    
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+                    for data in response.stream(32*1024):
+                        temp_file.write(data)
+                    temp_file.close()
+                    
+                    doc = fitz.open(temp_file.name)
+                    return doc, temp_file.name
+                except Exception as e:
+                    return {"error": f"Error retrieving PDF from MinIO: {str(e)}"}, None
             else:
-                return {"error": f"Failed to download PDF from URL: {response.status_code}"}, None
+                # Regular HTTP URL
+                response = requests.get(pdf_file)
+                if response.status_code == 200:
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+                    temp_file.write(response.content)
+                    temp_file.close()
+                    
+                    doc = fitz.open(temp_file.name)
+                    return doc, temp_file.name
+                else:
+                    return {"error": f"Failed to download PDF from URL: {response.status_code}"}, None
         except Exception as e:
             return {"error": f"Error downloading PDF: {str(e)}"}, None
     
@@ -144,13 +177,14 @@ class AnonymizationService:
             page.apply_redactions()
     
     @staticmethod
-    def _generate_pdf_output(doc: Any, result_deliver: str) -> Dict[str, Any]:
+    def _generate_pdf_output(doc: Any, result_deliver: str, process_id: str = None) -> Dict[str, Any]:
         """
         Generate PDF output
         
         Args:
             doc: PDF document
             result_deliver: Delivery method (url or response)
+            process_id: Unique identifier for the process
             
         Returns:
             Dictionary with PDF output
@@ -166,21 +200,43 @@ class AnonymizationService:
         if result_deliver == "response":
             result["pdf"] = base64.b64encode(pdf_bytes).decode("utf-8")
         else:  # url
-            # In a real implementation, you would upload to a storage service
-            # and return the URL. This is a placeholder.
-            result["pdf"] = "https://example.com/anonymized.pdf"
+            # Upload to MinIO
+            try:
+                minio_service = MinioService()
+                upload_location = os.environ.get('MINIO_UPLOAD_LOCATION', 'anonymized-pdfs')
+                object_name = f"{process_id}/result.pdf"
+                
+                # Make sure the bucket exists
+                minio_service.create_bucket_if_not_exists(upload_location)
+                
+                # Upload the file
+                with open(output_pdf.name, "rb") as f:
+                    file_size = os.path.getsize(output_pdf.name)
+                    minio_service.put_object(
+                        upload_location,
+                        object_name,
+                        f,
+                        file_size,
+                        content_type="application/pdf"
+                    )
+                
+                # Return the object path
+                result["pdf"] = f"{upload_location}/{object_name}"
+            except Exception as e:
+                result["error"] = f"Failed to upload PDF to storage: {str(e)}"
         
         os.unlink(output_pdf.name)
         return result
     
     @staticmethod
-    def _generate_image_output(doc: Any, result_deliver: str) -> Dict[str, Any]:
+    def _generate_image_output(doc: Any, result_deliver: str, process_id: str = None) -> Dict[str, Any]:
         """
         Generate image output
         
         Args:
             doc: PDF document
             result_deliver: Delivery method (url or response)
+            process_id: Unique identifier for the process
             
         Returns:
             Dictionary with image output
@@ -198,15 +254,37 @@ class AnonymizationService:
             if result_deliver == "response":
                 images.append(base64.b64encode(img_bytes).decode("utf-8"))
             else:  # url
-                # Placeholder for URL
-                images.append(f"https://example.com/anonymized_page_{page_num}.png")
+                # Upload to MinIO
+                try:
+                    minio_service = MinioService()
+                    upload_location = os.environ.get('MINIO_UPLOAD_LOCATION', 'anonymized-pdfs')
+                    object_name = f"{process_id}/result_page_{page_num}.png"
+                    
+                    # Make sure the bucket exists
+                    minio_service.create_bucket_if_not_exists(upload_location)
+                    
+                    # Upload the file
+                    with open(img_path, "rb") as f:
+                        file_size = os.path.getsize(img_path)
+                        minio_service.put_object(
+                            upload_location,
+                            object_name,
+                            f,
+                            file_size,
+                            content_type="image/png"
+                        )
+                    
+                    # Return the object path
+                    images.append(f"{upload_location}/{object_name}")
+                except Exception as e:
+                    images.append(f"Error: {str(e)}")
             
             os.unlink(img_path)
         
         return {"img": images}
     
     @staticmethod
-    def _generate_markdown_output(doc: Any, sensitive_content: List[str], result_deliver: str) -> Dict[str, Any]:
+    def _generate_markdown_output(doc: Any, sensitive_content: List[str], result_deliver: str, process_id: str = None) -> Dict[str, Any]:
         """
         Generate markdown output
         
@@ -214,6 +292,7 @@ class AnonymizationService:
             doc: PDF document
             sensitive_content: List of words to be anonymized
             result_deliver: Delivery method (url or response)
+            process_id: Unique identifier for the process
             
         Returns:
             Dictionary with markdown output
@@ -232,8 +311,38 @@ class AnonymizationService:
         if result_deliver == "response":
             return {"md": md_content}
         else:  # url
-            # Placeholder for URL
-            return {"md": "https://example.com/anonymized.md"}
+            # Upload to MinIO
+            try:
+                minio_service = MinioService()
+                upload_location = os.environ.get('MINIO_UPLOAD_LOCATION', 'anonymized-pdfs')
+                object_name = f"{process_id}/result.md"
+                
+                # Make sure the bucket exists
+                minio_service.create_bucket_if_not_exists(upload_location)
+                
+                # Create a temporary file with the markdown content
+                temp_md = tempfile.NamedTemporaryFile(delete=False, suffix=".md", mode="w")
+                temp_md.write(md_content)
+                temp_md.close()
+                
+                # Upload the file
+                with open(temp_md.name, "rb") as f:
+                    file_size = os.path.getsize(temp_md.name)
+                    minio_service.put_object(
+                        upload_location,
+                        object_name,
+                        f,
+                        file_size,
+                        content_type="text/markdown"
+                    )
+                
+                # Clean up
+                os.unlink(temp_md.name)
+                
+                # Return the object path
+                return {"md": f"{upload_location}/{object_name}"}
+            except Exception as e:
+                return {"md": f"Error: {str(e)}"}
     
     @staticmethod
     def _expand_non_ascii_variations(words: List[str]) -> List[str]:
