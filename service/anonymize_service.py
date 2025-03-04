@@ -122,11 +122,14 @@ class AnonymizationService:
             doc: PDF document
             sensitive_content: List of words to be anonymized
         """
+        # Generate case variations for non-ASCII characters
+        expanded_sensitive_content = AnonymizationService._expand_non_ascii_variations(sensitive_content)
+        
         for page_num in range(len(doc)):
             page = doc[page_num]
             
             # Find and redact sensitive content
-            for word in sensitive_content:
+            for word in expanded_sensitive_content:
                 areas = page.search_for(word)
                 for rect in areas:
                     # Add some padding to the rectangle
@@ -231,6 +234,69 @@ class AnonymizationService:
         else:  # url
             # Placeholder for URL
             return {"md": "https://example.com/anonymized.md"}
+    
+    @staticmethod
+    def _expand_non_ascii_variations(words: List[str]) -> List[str]:
+        """
+        Generate variations of words with non-ASCII characters in both upper and lower case
+        
+        Args:
+            words: List of words to process
+            
+        Returns:
+            Expanded list of words with case variations for non-ASCII characters
+        """
+        result = set(words)  # Use a set to avoid duplicates
+        
+        for word in words:
+            # Check if the word contains any non-ASCII characters
+            if any(ord(c) > 127 for c in word):
+                # Generate all possible case variations for non-ASCII characters
+                variations = AnonymizationService._generate_case_variations(word)
+                result.update(variations)
+        
+        return list(result)
+    
+    @staticmethod
+    def _generate_case_variations(word: str) -> List[str]:
+        """
+        Generate all possible case variations for non-ASCII characters in a word
+        
+        Args:
+            word: Word to generate variations for
+            
+        Returns:
+            List of variations
+        """
+        # Find positions of non-ASCII characters
+        non_ascii_positions = [i for i, c in enumerate(word) if ord(c) > 127]
+        
+        if not non_ascii_positions:
+            return [word]
+        
+        # Generate all possible combinations of upper/lower case for non-ASCII characters
+        variations = []
+        
+        # Calculate the number of variations (2^n where n is the number of non-ASCII chars)
+        num_variations = 2 ** len(non_ascii_positions)
+        
+        for i in range(num_variations):
+            # Create a new variation
+            chars = list(word)
+            
+            # For each bit position in i, change the case of the corresponding non-ASCII character
+            for bit_pos, char_pos in enumerate(non_ascii_positions):
+                # Check if the bit at position bit_pos in i is set
+                if (i >> bit_pos) & 1:
+                    # Change to uppercase
+                    chars[char_pos] = chars[char_pos].upper()
+                else:
+                    # Change to lowercase
+                    chars[char_pos] = chars[char_pos].lower()
+            
+            variations.append(''.join(chars))
+        
+        return variations
     
     @staticmethod
     def _cleanup_resources(doc: Any, temp_file: Optional[str]) -> None:
