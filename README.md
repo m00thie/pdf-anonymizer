@@ -7,6 +7,7 @@ A service for anonymizing sensitive content in PDF files.
 - Anonymize sensitive content in PDF files
 - Support for multiple output formats (PDF, Image, Markdown)
 - Flexible delivery options (direct response or URL)
+- MinIO integration for object storage
 
 ## Installation
 
@@ -31,6 +32,14 @@ docker run -p 5000:5000 pdf-anonymizer
 ```
 
 ## Usage
+
+### Environment Variables
+
+The application uses the following environment variables:
+
+- `MINIO_HOST`: MinIO server host (default: localhost:9000)
+- `MINIO_KEY_ID`: MinIO access key
+- `MINIO_SECRET_KEY`: MinIO secret key
 
 ### API Endpoint
 
