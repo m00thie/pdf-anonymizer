@@ -38,14 +38,26 @@ def anonymize_pdf_endpoint():
         if result_deliver not in ["url", "response"]:
             return jsonify({"error": "result_deliver must be either 'url' or 'response'"}), 400
         
+        # Get process_id if provided
+        process_id = data.get('process_id')
+        
         # Call the service function
         result = AnonymizationService.anonymize_pdf(
             sensitive_content=sensitive_content,
             pdf_content=pdf_content,
             pdf_file=pdf_file,
             output_format=output_format,
-            result_deliver=result_deliver
+            result_deliver=result_deliver,
+            process_id=process_id
         )
+        
+        # Add process_id to response
+        if process_id:
+            result['process_id'] = process_id
+        elif 'process_id' not in result:
+            # If process_id was generated inside the service, it's not in the result
+            # We need to add it manually
+            result['process_id'] = AnonymizationService.anonymize_pdf.__defaults__[-1]
         
         if "error" in result:
             return jsonify({"error": result["error"]}), 400

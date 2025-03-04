@@ -52,6 +52,9 @@ class AnonymizationService:
             # Generate outputs in requested formats
             result = {}
             
+            # Add process_id to result
+            result['process_id'] = process_id
+            
             if "pdf" in output_format:
                 result.update(AnonymizationService._generate_pdf_output(doc, result_deliver, process_id))
             
