@@ -1,7 +1,9 @@
 from flask import Flask, request, jsonify
 import json
+import os
 from typing import List, Dict, Any
 from service.anonymize_service import AnonymizationService
+from waitress import serve
 
 app = Flask(__name__)
 
@@ -38,14 +40,26 @@ def anonymize_pdf_endpoint():
         if result_deliver not in ["url", "response"]:
             return jsonify({"error": "result_deliver must be either 'url' or 'response'"}), 400
         
+        # Get process_id if provided
+        process_id = data.get('process_id')
+        
         # Call the service function
         result = AnonymizationService.anonymize_pdf(
             sensitive_content=sensitive_content,
             pdf_content=pdf_content,
             pdf_file=pdf_file,
             output_format=output_format,
-            result_deliver=result_deliver
+            result_deliver=result_deliver,
+            process_id=process_id
         )
+        
+        # Add process_id to response
+        if process_id:
+            result['process_id'] = process_id
+        elif 'process_id' not in result:
+            # If process_id was generated inside the service, it's not in the result
+            # We need to add it manually
+            result['process_id'] = AnonymizationService.anonymize_pdf.__defaults__[-1]
         
         if "error" in result:
             return jsonify({"error": result["error"]}), 400
@@ -57,7 +71,12 @@ def anonymize_pdf_endpoint():
 
 def main():
     """Entry point for the application."""
-    app.run(host='0.0.0.0', port=5000)
+    # Get port from environment variable or use default
+    port = int(os.environ.get('PORT', 5000))
+    
+    # Use waitress for production deployment
+    print(f"Starting server on port {port} with waitress WSGI server...")
+    serve(app, host='0.0.0.0', port=port, threads=8)
 
 if __name__ == '__main__':
     main()
