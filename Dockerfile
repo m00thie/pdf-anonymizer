@@ -8,14 +8,11 @@ RUN pip install poetry==2.1.1
 # Configure poetry to not use a virtual environment in the container
 RUN poetry config virtualenvs.create false
 
-# Copy pyproject.toml and poetry.lock first to leverage Docker cache
-COPY pyproject.toml poetry.lock* ./
+# Copy application code
+COPY . .
 
 # Install dependencies
 RUN poetry install --no-interaction --no-ansi
-
-# Copy application code
-COPY . .
 
 # Expose the port the app runs on
 EXPOSE 5000
