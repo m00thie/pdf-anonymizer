@@ -3,7 +3,6 @@ name = "pdf-anonymizer"
 version = "0.1.0"
 description = "A service for anonymizing sensitive content in PDF files"
 authors = ["Your Name <your.email@example.com>"]
-readme = "README.md"
 packages = [
     {include = "service"},
     {include = "pdf_anonymizer"}
